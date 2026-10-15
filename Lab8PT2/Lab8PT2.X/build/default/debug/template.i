@@ -2359,10 +2359,21 @@ PSECT code,class=CODE,delta=2
 
 Setup:
     ; add device setup here
+    BANKSEL PORTA
+    CLRF PORTA
+    CLRF PORTC
+
     BANKSEL TRISC
     BSF TRISC,6 ;c output
-    BCF TRISC,7 ;c input
+    BSF TRISC,7 ;c input
     BCF TRISA,0
+
+    BANKSEL ANSEL
+    CLRF ANSEL
+    BANKSEL ANSELH
+    CLRF ANSELH
+    BCF PORTB,0
+
     BANKSEL TXSTA
     CLRF TXSTA
     BCF TXSTA,4 ;set EUSART in async mode
@@ -2382,12 +2393,18 @@ Setup:
     CLRF RCSTA
     BSF RCSTA,7 ;enable serial port pins
     BSF RCSTA,4 ;enable recieve
+
     BANKSEL TXSTA
     BSF TXSTA,5 ;enable transmit
 
+    BANKSEL RxReady
+    CLRF RxReady
+    CLRF TxPending
+
+    BANKSEL INTCON
+    CLRF INTCON
+
     goto Main
-
-
 
 Main:
    CALL ServiceRX
@@ -2396,53 +2413,62 @@ Main:
    GOTO Main
 
 ServiceRX:
+    BANKSEL PORTA
     BSF PORTA,0
-    BCF PORTA,0
+    BCF PORTA,0 ; momentary diag pulse
+    BANKSEL RxReady
     MOVF RxReady,W
-    BTFSS STATUS,2
-RETURN
-    BANKSEL RCSTA
-    BTFSS RCSTA,1
-    GOTO Check
-    BCF RCSTA ,4
-    BSF RCSTA,4
+    BTFSS STATUS,2 ; Is RxReady == 0?
+RETURN ; No, return
 
-Check:
+    ; Clear Overrun Error if it happens
+    BANKSEL RCSTA
+    BTFSS RCSTA,1 ; Check ((RCSTA) and 07Fh), 1
+    GOTO ReadUART ; No error, go read the byte
+    BCF RCSTA,4 ; Clear ((RCSTA) and 07Fh), 4 to reset ((RCSTA) and 07Fh), 1
+    BSF RCSTA,4 ; Re-enable receiver
+
+ReadUART:
     BANKSEL PIR1
-    BTFSS PIR1,5 ;is transmit reg empty?
-RETURN
+    BTFSS PIR1,5 ; Check ((PIR1) and 07Fh), 5 (1 = byte available)
+RETURN ; No data yet, exit
     BANKSEL RCREG
     MOVF RCREG,W
-    MOVWF RxByte
+    BANKSEL RxByte
+    MOVWF RxByte ; Save data byte
     MOVLW 1
-    MOVWF RxReady
+    MOVWF RxReady ; Set ready flag
 RETURN
 
 ProcessEcho:
-    MOVF RxReady,W
-    BTFSC RxReady,2
-RETURN
-    MOVF TxPending,W
+    BANKSEL RxReady
+    MOVF RxReady,F ;movingg recieved to w
+    BTFSC RxReady,2 ;is it ready to recieve?
+RETURN ;
+    MOVF TxPending,F ;
     BTFSS TxPending,2
 RETURN
     MOVF RxByte,W
-    MOVWF TxByte
+    MOVWF TxByte ;recieved moved to transmit
 
-    CLRF RxReady
-    MOVLW 1
-    MOVWF TxPending
+    CLRF RxReady ;clear recieve flag
+    MOVLW 0x01
+    MOVWF TxPending ;set tx flag
 RETURN
 
 ServiceTX:
+    BANKSEL TxPending
     MOVF TxPending,W
-    BTFSC STATUS,2
+    BTFSC STATUS,2 ;is it waiting?
 RETURN
     BANKSEL PIR1
-    BTFSS PIR1,4
+    BTFSS PIR1,4 ;txreg empty
 RETURN
+    BANKSEL TxByte
+    MOVF TxByte,W ;send the stored value
     BANKSEL TXREG
-    MOVF TxByte,W
     MOVWF TXREG
-    CLRF TxPending
+    CLRF TxPending ;clear the pending flag
 RETURN
+
  End
